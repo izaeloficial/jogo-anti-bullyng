@@ -6,15 +6,11 @@
 <meta name="theme-color" content="#0d0221">
 <meta name="description" content="Anti-Bullying Runner v2.0 Ultra — Endless Runner educativo estilo Subway Surfers sobre prevenção ao bullying.">
 <title>Anti-Bullying Runner v2.0 Ultra</title>
-<!-- Corrigido: path relativo correto para GitHub Pages -->
 <link rel="stylesheet" href="./style.css">
 </head>
 <body data-theme="arcade" data-lang="pt">
 
-<!-- ======================================================= -->
-<!-- BARRA SUPERIOR GLOBAL (mute / fullscreen) — fica visível -->
-<!-- em todas as telas que não sejam o jogo em si             -->
-<!-- ======================================================= -->
+<!-- BARRA SUPERIOR GLOBAL (mute / fullscreen) -->
 <div id="global-toolbar" class="global-toolbar hidden" aria-hidden="false">
   <button id="btn-mute" class="icon-btn" type="button" aria-label="Silenciar áudio" data-state="unmuted">
     <span class="icon-on">🔊</span>
@@ -25,80 +21,132 @@
   </button>
 </div>
 
+<!-- CONTAINER PRINCIPAL DO JOGO -->
 <div id="app" class="app-root">
+  <!-- Canvas será criado dinamicamente por game.js -->
+</div>
 
-  <!-- content omitted for brevity in this commit: unchanged markup above -->
-
-</div><!-- /#app -->
-
+<!-- Script principal do jogo - tudo integrado -->
 <script src="./game.js" defer></script>
-<!-- Shield integration moved inside index.html to keep only the main three files (index, CSS, game.js).
-     This script patches activatePower and handleCollision so the shield attaches to the player
-     and consumes one collision without reducing lives. Loaded after game.js (defer), so it
-     safely augments existing functions. -->
+
+<!-- Shield patch - Integração do escudo com o jogador -->
 <script>
 (function(){
   'use strict';
-  // keep references to original functions if they exist
-  var origActivate = window.activatePower;
-  var origHandleCollision = window.handleCollision;
+  
+  // Aguardar que game.js carregue e estabeleça as funções
+  var origActivate = null;
+  var origHandleCollision = null;
+  var patchAttempts = 0;
+  
+  function setupShieldPatch() {
+    patchAttempts++;
+    
+    // Verificar se as funções estão disponíveis
+    if (window.activatePower && window.handleCollision && window.spawnFloatingText && window.sfxPowerup && window.sfxShieldBreak) {
+      origActivate = window.activatePower;
+      origHandleCollision = window.handleCollision;
+      
+      // Override activatePower para suportar escudo
+      window.activatePower = function(type){
+        try { 
+          if (typeof origActivate === 'function') origActivate(type); 
+        } catch(e){ 
+          console.warn('activatePower original failed', e); 
+        }
 
-  window.activatePower = function(type){
-    try { if (typeof origActivate === 'function') origActivate(type); } catch(e){ console.warn('activatePower original failed', e); }
+        try {
+          if (type === 'shield') {
+            var rs = window.runState || null;
+            if (rs && rs.player) {
+              rs.player.shieldActive = true;
+              rs.player.shieldHits = 1;
+              
+              if (typeof window.sfxPowerup === 'function') window.sfxPowerup();
+              if (typeof window.spawnFloatingText === 'function') {
+                window.spawnFloatingText('🛡️ Escudo!', window.innerWidth/2, 80, 'is-shield');
+              }
+            } else {
+              // Se runState não existir, guardar para aplicar depois
+              window.__pendingShield = (window.__pendingShield || 0) + 1;
+            }
+          }
+        } catch (e) { 
+          console.warn('shield patch activate error', e); 
+        }
+      };
 
-    try {
-      if (type === 'shield') {
-        var rs = window.runState || null;
-        if (rs && rs.player) {
-          rs.player.shieldActive = true;
-          rs.player.shieldHits = 1;
-
-          var el = document.querySelector('.powerup-indicator[data-power="shield"]');
-          if (el) el.removeAttribute('hidden');
-
-          if (typeof window.sfxPowerup === 'function') window.sfxPowerup();
-          if (typeof window.spawnFloatingText === 'function') window.spawnFloatingText('Escudo ativado', window.innerWidth/2, 80, 'is-shield');
-        } else {
-          window.__pendingShield = (window.__pendingShield || 0) + 1;
+      // Aplicar escudo pendente se existir
+      function applyPendingShield() {
+        try {
+          if (window.__pendingShield && window.runState && window.runState.player) {
+            window.runState.player.shieldActive = true;
+            window.runState.player.shieldHits = window.__pendingShield;
+            delete window.__pendingShield;
+            if (typeof window.sfxPowerup === 'function') window.sfxPowerup();
+            if (typeof window.spawnFloatingText === 'function') {
+              window.spawnFloatingText('🛡️ Escudo ativado!', window.innerWidth/2, 80, 'is-shield');
+            }
+          }
+        } catch (e) { 
+          console.warn('applyPendingShield error', e); 
         }
       }
-    } catch (e) { console.warn('shield inline activate error', e); }
-  };
 
-  function applyPendingShield() {
-    try {
-      if (window.__pendingShield && window.runState && window.runState.player) {
-        window.runState.player.shieldActive = true;
-        window.runState.player.shieldHits = window.__pendingShield;
-        delete window.__pendingShield;
-        var el = document.querySelector('.powerup-indicator[data-power="shield"]');
-        if (el) el.removeAttribute('hidden');
-        if (typeof window.sfxPowerup === 'function') window.sfxPowerup();
-        if (typeof window.spawnFloatingText === 'function') window.spawnFloatingText('Escudo ativado', window.innerWidth/2, 80, 'is-shield');
-      }
-    } catch (e) { console.warn(e); }
+      // Observador para aplicar escudo pendente
+      var runStateObserver = setInterval(function(){
+        applyPendingShield();
+        if (window.runState && window.runState.player) { 
+          clearInterval(runStateObserver); 
+        }
+      }, 300);
+
+      // Override handleCollision para proteger com escudo
+      window.handleCollision = function(rs){
+        try {
+          var player = (rs && rs.player) || (window.runState && window.runState.player) || null;
+          if (player && player.shieldActive && player.shieldHits > 0) {
+            player.shieldHits -= 1;
+            player.shieldActive = player.shieldHits > 0;
+            
+            if (typeof window.sfxShieldBreak === 'function') window.sfxShieldBreak();
+            if (typeof window.spawnFloatingText === 'function') {
+              window.spawnFloatingText('⚔️ Escudo ativado!', window.innerWidth/2, window.innerHeight/3, 'is-shield-break');
+            }
+            return; // Não propagar dano
+          }
+        } catch (e) { 
+          console.warn('shield patch collision check failed', e); 
+        }
+
+        // Chamar implementação original
+        if (typeof origHandleCollision === 'function') return origHandleCollision(rs);
+      };
+      
+      return true; // Sucesso
+    }
+    
+    // Se não conseguiu e não excedeu tentativas, tentar novamente
+    if (patchAttempts < 50) {
+      setTimeout(setupShieldPatch, 100);
+    } else {
+      console.warn('Shield patch: Could not initialize after 50 attempts');
+    }
+    
+    return false;
   }
-
-  var runStateObserver = setInterval(function(){
-    if (window.runState && window.runState.player) { applyPendingShield(); clearInterval(runStateObserver); }
-  }, 300);
-
-  window.handleCollision = function(rs){
-    try {
-      var player = (rs && rs.player) || (window.runState && window.runState.player) || null;
-      if (player && player.shieldActive && player.shieldHits > 0) {
-        player.shieldHits -= 1;
-        player.shieldActive = false;
-        if (typeof window.sfxShieldBreak === 'function') window.sfxShieldBreak();
-        if (typeof window.spawnFloatingText === 'function') window.spawnFloatingText('+Escudo!', window.innerWidth/2, window.innerHeight/3, 'is-shield-break');
-        try { document.querySelector('.powerup-indicator[data-power="shield"]')?.setAttribute('hidden', ''); } catch(e){}
-        return;
-      }
-    } catch (e) { console.warn('shield inline collision check failed', e); }
-
-    if (typeof origHandleCollision === 'function') return origHandleCollision(rs);
-  };
+  
+  // Iniciar patch
+  if (document.readyState === 'loading') {
+    document.addEventListener('DOMContentLoaded', setupShieldPatch);
+  } else {
+    setupShieldPatch();
+  }
+  
+  // Também tentar quando o game estiver pronto
+  document.addEventListener('gameReady', setupShieldPatch);
 })();
 </script>
+
 </body>
 </html>
